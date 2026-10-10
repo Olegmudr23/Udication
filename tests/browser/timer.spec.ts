@@ -103,3 +103,78 @@ test("expiry shows an alarm, plays sound and keeps history after reload", async 
   await page.screenshot({ path: "test-results/history-mobile.png", fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+test("theme follows the device initially and saves an explicit choice", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.getByRole("button", { name: "Включить светлую тему" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Включить тёмную тему" })).toBeEnabled();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await page.getByRole("button", { name: "Включить тёмную тему" }).click();
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Включить светлую тему" })).toBeEnabled();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  for (const width of [1440, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.screenshot({ path: `test-results/dark-${width}.png`, fullPage: true });
+    await page.getByRole("button", { name: "Настройки", exact: true }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+    await page.screenshot({ path: `test-results/dark-settings-${width}.png` });
+    await page.getByRole("button", { name: "Закрыть настройки" }).click();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+  expect(errors).toEqual([]);
+});
+
+test("all seven tooth shapes stay separate from the timer and persist through pause and reload", async ({ page }) => {
+  test.setTimeout(60000);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Начать", exact: true })).toBeEnabled();
+  const shapes = new Set<string>();
+  for (let variant = 1; variant <= 7; variant++) {
+    await page.evaluate(variant => {
+      const saved = JSON.parse(localStorage.getItem("zubodoro.v1")!);
+      localStorage.setItem("zubodoro.v1", JSON.stringify({ ...saved, tooth: variant }));
+    }, variant);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Начать", exact: true })).toBeEnabled();
+    await expect(page.locator(".tooth-illustration")).toHaveAttribute("data-tooth", String(variant));
+    shapes.add((await page.locator(".tooth-body").getAttribute("d"))!);
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      const fits = await page.evaluate(() => {
+        const art = document.querySelector(".timer-art")!.getBoundingClientRect();
+        const timer = document.querySelector(".timer-display")!.getBoundingClientRect();
+        const controls = document.querySelector(".timer-controls")!.getBoundingClientRect();
+        const svg = document.querySelector(".tooth-illustration")!.getBoundingClientRect();
+        return timer.top >= art.bottom && controls.top >= timer.bottom
+          && svg.left >= 0 && svg.right <= window.innerWidth
+          && document.documentElement.scrollWidth <= window.innerWidth;
+      });
+      expect.soft(fits, `Tooth ${variant} and timer must not overlap at ${width}px`).toBe(true);
+      await page.locator("#timer-panel").screenshot({ path: `test-results/tooth-${variant}-${width}.png` });
+    }
+  }
+  expect(shapes.size).toBe(7);
+  await page.setViewportSize({ width: 320, height: 640 });
+  const startBounds = await page.getByRole("button", { name: "Начать", exact: true }).boundingBox();
+  expect(startBounds!.y + startBounds!.height).toBeLessThanOrEqual(640);
+  await page.screenshot({ path: "test-results/compact-320.png", fullPage: true });
+  const before = await page.locator(".tooth-illustration").getAttribute("data-tooth");
+  await page.getByRole("button", { name: "Начать", exact: true }).click();
+  await page.getByRole("button", { name: "Пауза", exact: true }).click();
+  await expect(page.locator(".tooth-illustration")).toHaveAttribute("data-tooth", before!);
+  await page.reload();
+  await expect(page.locator(".tooth-illustration")).toHaveAttribute("data-tooth", before!);
+  await page.getByRole("button", { name: "Начать интервал заново", exact: true }).click();
+  await expect(page.locator(".tooth-illustration")).not.toHaveAttribute("data-tooth", before!);
+  const reset = await page.locator(".tooth-illustration").getAttribute("data-tooth");
+  await page.getByRole("tab", { name: "Перерыв", exact: true }).click();
+  await expect(page.locator(".tooth-illustration")).not.toHaveAttribute("data-tooth", reset!);
+});

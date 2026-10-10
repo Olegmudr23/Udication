@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, BellRing, Check, Coffee, Flame, History, Pause, Play, RotateCcw, Settings2, SkipForward, Sparkles, Target, Volume2, VolumeX, X } from "lucide-react";
+import { ArrowRight, BellRing, Check, Coffee, Flame, History, Moon, Pause, Play, RotateCcw, Settings2, SkipForward, Sparkles, Sun, Target, Volume2, VolumeX, X } from "lucide-react";
+import { randomTooth, ToothTimer } from "@/components/tooth-timer";
 import { defaults, finish, initialState, parseSettings, restoreTimer, tick, type Mode, type Settings, type TimerState } from "@/lib/timer";
 
 const STORAGE_KEY = "zubodoro.v1";
@@ -22,24 +23,6 @@ function plural(number: number, forms: [string, string, string]) {
   return forms[lastTwo >= 11 && lastTwo <= 14 ? 2 : last === 1 ? 0 : last >= 2 && last <= 4 ? 1 : 2];
 }
 
-function ToothTimer({ progress, running, resting }: { progress: number; running: boolean; resting: boolean }) {
-  return <svg className={`tooth-illustration ${running ? "is-running" : ""}`} viewBox="0 0 360 420" role="img" aria-label={resting ? "Зуб отдыхает" : "Улыбающийся зуб"}>
-    <defs>
-      <clipPath id="tooth-clip"><path d={toothPath} /></clipPath>
-      <linearGradient id="enamel" x1="0" y1="0" x2="1" y2="1"><stop stopColor="#fff"/><stop offset="1" stopColor="#f4f8f5"/></linearGradient>
-    </defs>
-    <ellipse cx="180" cy="399" rx="81" ry="7" fill="#d8e4dc" opacity=".5" />
-    <path d={toothPath} fill="url(#enamel)" stroke="#345c50" strokeWidth="3" />
-    <g clipPath="url(#tooth-clip)">
-      <rect x="40" y={382 - progress * 348} width="280" height="360" fill={resting ? "#c8e8de" : "#f8c6bc"} opacity=".65" className="tooth-fill" />
-    </g>
-    <path d="M83 112C80 85 97 64 119 62" fill="none" stroke="#fff" strokeWidth="10" strokeLinecap="round" />
-    {resting ? <g fill="none" stroke="#345c50" strokeWidth="4" strokeLinecap="round"><path d="M137 119q8 8 16 0"/><path d="M207 119q8 8 16 0"/></g> : <g fill="#345c50"><ellipse cx="145" cy="119" rx="4.5" ry="6"/><ellipse cx="215" cy="119" rx="4.5" ry="6"/></g>}
-    <ellipse cx="124" cy="135" rx="11" ry="5" fill="#efb1a8" opacity=".55"/><ellipse cx="236" cy="135" rx="11" ry="5" fill="#efb1a8" opacity=".55"/>
-    <path d="M170 135q10 12 20 0" fill="none" stroke="#345c50" strokeWidth="3" strokeLinecap="round" />
-  </svg>;
-}
-
 export default function Home() {
   const [settings, setSettings] = useState<Settings>(defaults);
   const [timer, setTimer] = useState<TimerState>(() => initialState());
@@ -48,6 +31,9 @@ export default function Home() {
   const [storageWarning, setStorageWarning] = useState(false);
   const [historyFilter, setHistoryFilter] = useState<"all" | "focus" | "break">("all");
   const [historyCount, setHistoryCount] = useState(20);
+  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [tooth, setTooth] = useState(1);
+  const previousInterval = useRef("focus-0");
   const dialog = useRef<HTMLDialogElement>(null);
   const audio = useRef<AudioContext | null>(null);
   const sounded = useRef(0);
@@ -60,6 +46,8 @@ export default function Home() {
   const filteredHistory = timer.history.filter(entry => historyFilter === "all" || (historyFilter === "focus" ? entry.mode === "focus" : entry.mode !== "focus"));
 
   useEffect(() => {
+    setTheme(document.documentElement.dataset.theme === "dark" ? "dark" : "light");
+    let selectedTooth = randomTooth();
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
       if (saved && typeof saved === "object") {
@@ -67,21 +55,43 @@ export default function Home() {
         const restored = restoreTimer(saved.timer, prefs);
         setSettings(prefs);
         setTimer(restored);
+        previousInterval.current = `${restored.mode}-${restored.completions}`;
+        if (Number.isInteger(saved.tooth) && saved.tooth >= 1 && saved.tooth <= 7) {
+          const finishedWhileAway = restored.completions !== (saved.timer?.completions ?? 0);
+          selectedTooth = finishedWhileAway ? randomTooth(saved.tooth) : saved.tooth;
+        }
         sounded.current = restored.completions;
         if (typeof saved.task === "string") setTask(saved.task.slice(0, 100));
       }
     } catch { /* Invalid saved data is replaced with defaults on the next save. */ }
+    setTooth(selectedTooth);
     setReady(true);
   }, []);
 
   useEffect(() => {
     if (!ready) return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ settings, timer, task }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ settings, timer, task, tooth }));
       setStorageWarning(false);
     }
     catch { setStorageWarning(true); }
-  }, [ready, settings, timer, task]);
+  }, [ready, settings, timer, task, tooth]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const interval = `${timer.mode}-${timer.completions}`;
+    if (previousInterval.current === interval) return;
+    previousInterval.current = interval;
+    setTooth(current => randomTooth(current));
+  }, [ready, timer.mode, timer.completions]);
+
+  function toggleTheme() {
+    const next = theme === "light" ? "dark" : "light";
+    setTheme(next);
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("zubodoro.theme", next); }
+    catch { setStorageWarning(true); }
+  }
 
   useEffect(() => {
     if (!ready) return;
@@ -138,6 +148,7 @@ export default function Home() {
   }
 
   function selectMode(mode: Mode) {
+    if (mode === timer.mode) setTooth(current => randomTooth(current));
     setTimer(current => ({ ...current, mode, remaining: settings[mode] * 60, deadline: null, notice: "", sessionTask: "" }));
   }
 
@@ -151,6 +162,7 @@ export default function Home() {
       <a className="brand" href="/" aria-label="Зубодоро, главная"><span className="brand-mark"><Tooth size={25} strokeWidth={1.8}/></span><span>зубодоро<span className="brand-dot">.</span></span></a>
       <div className="header-actions">
         <span className="local-badge"><span/> Маленькими шагами</span>
+        <button className="icon-button" title={theme === "light" ? "Включить тёмную тему" : "Включить светлую тему"} aria-label={theme === "light" ? "Включить тёмную тему" : "Включить светлую тему"} disabled={!ready} onClick={toggleTheme}>{theme === "light" ? <Moon size={20}/> : <Sun size={20}/>}</button>
         <button className="icon-button" title={settings.sound ? "Выключить звук" : "Включить звук"} aria-label={settings.sound ? "Выключить звук" : "Включить звук"} aria-pressed={settings.sound} onClick={() => { setSettings(s => ({ ...s, sound: !s.sound })); if (!settings.sound) { try { if (!audio.current) audio.current = new AudioContext(); void audio.current.resume().catch(() => {}); } catch {} } }}>
           {settings.sound ? <Volume2 size={20}/> : <VolumeX size={20}/>}
         </button>
@@ -178,13 +190,14 @@ export default function Home() {
         </div>}
         <div className="timer-art">
           <span className="art-note note-left">{resting ? "можно просто" : "по одному"}<br/>{resting ? "побыть" : "кусочку"}<span className="note-line"/></span>
-          <ToothTimer progress={progress} running={running} resting={resting}/>
-          <div className="timer-display"><span className="timer-label">{running ? resting ? "ОТДЫХАЕМ" : "СОСРЕДОТОЧЕНЫ" : timer.remaining < settings[timer.mode] * 60 ? "НА ПАУЗЕ" : "ГОТОВЫ НАЧАТЬ?"}</span><span className="time" role="timer" aria-label={`Осталось ${Math.floor(timer.remaining / 60)} минут ${timer.remaining % 60} секунд`}>{time}</span><span className="timer-subtitle">{resting ? "заряжаем батарейки" : "минут чистого фокуса"}</span></div>
+          <span className="tooth-caption" aria-hidden="true">Зуб № {tooth}</span>
+          <ToothTimer progress={progress} running={running} resting={resting} variant={tooth}/>
           <span className="art-note note-right"><Sparkles size={23} strokeWidth={1.3}/><span>{resting ? "заслуженный" : "маленький"}<br/>{resting ? "перерыв" : "шаг вперёд"}</span></span>
         </div>
 
+        <div className="timer-display"><span className="timer-label">{running ? resting ? "ОТДЫХАЕМ" : "СОСРЕДОТОЧЕНЫ" : timer.remaining < settings[timer.mode] * 60 ? "НА ПАУЗЕ" : "ГОТОВЫ НАЧАТЬ?"}</span><span className="time" role="timer" aria-label={`Осталось ${Math.floor(timer.remaining / 60)} минут ${timer.remaining % 60} секунд`}>{time}</span><span className="timer-subtitle">{resting ? "заряжаем батарейки" : "минут чистого фокуса"}</span></div>
         <div className="timer-controls">
-          <button className="icon-button round-control" title="Начать интервал заново" aria-label="Начать интервал заново" disabled={!ready} onClick={() => setTimer(s => ({ ...s, remaining: settings[s.mode] * 60, deadline: null, notice: "", sessionTask: "" }))}><RotateCcw size={20}/></button>
+          <button className="icon-button round-control" title="Начать интервал заново" aria-label="Начать интервал заново" disabled={!ready} onClick={() => { setTooth(current => randomTooth(current)); setTimer(s => ({ ...s, remaining: settings[s.mode] * 60, deadline: null, notice: "", sessionTask: "" })); }}><RotateCcw size={20}/></button>
           <button className="start-button" onClick={toggleTimer} disabled={!ready}>{running ? <Pause size={19} fill="currentColor"/> : <Play size={19} fill="currentColor"/>}{running ? "Пауза" : timer.remaining < settings[timer.mode] * 60 ? "Продолжить" : "Начать"}</button>
           <button className="icon-button round-control" title="Пропустить интервал" aria-label="Пропустить интервал" disabled={!ready} onClick={() => setTimer(s => finish(s, settings, Date.now(), true))}><SkipForward size={20}/></button>
         </div>
